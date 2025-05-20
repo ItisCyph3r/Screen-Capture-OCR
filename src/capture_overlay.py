@@ -61,13 +61,27 @@ class ScreenCaptureApp:
         if not self.start_x or not self.start_y:
             return
         try:
+            # Reset the selection rectangle
+            if self.current_rect:
+                self.canvas.delete(self.current_rect)
+                self.current_rect = None
+                
             x1 = min(self.start_x, event.x)
             y1 = min(self.start_y, event.y)
             x2 = max(self.start_x, event.x)
             y2 = max(self.start_y, event.y)
+            
+            # Check if selection is too small
             if x2 - x1 < 5 or y2 - y1 < 5:
-                messagebox.showinfo("Info", "Selection too small. Please try again.")
+                # Reset selection coordinates
+                self.start_x = None
+                self.start_y = None
+                
+                # Show message without blocking the main thread
+                self.root.after(1, lambda: messagebox.showinfo("Info", "Selection too small. Please try again."))
                 return
+                
+            # Hide the window before processing
             self.root.withdraw()
             
             # Capture screenshot with proper error handling
@@ -84,12 +98,20 @@ class ScreenCaptureApp:
                 self.root.after(50, self.check_processing_results)
             except Exception as inner_e:
                 print(f"Error starting processing thread: {inner_e}")
+                # Show the window again if there's an error
+                self.root.deiconify()
                 messagebox.showerror("Error", f"Failed to start processing: {str(inner_e)}")
-                self.quit()
+                # Reset selection coordinates
+                self.start_x = None
+                self.start_y = None
         except Exception as e:
             print(f"Error in screen capture: {e}")
+            # Show the window again if there's an error
+            self.root.deiconify()
             messagebox.showerror("Error", f"Failed to capture screen: {str(e)}")
-            self.quit()
+            # Reset selection coordinates
+            self.start_x = None
+            self.start_y = None
 
     def copy_to_clipboard(self, text):
         try:
@@ -218,30 +240,53 @@ class ScreenCaptureApp:
         """Check if the image processing is complete"""
         try:
             # Non-blocking check for results
-            success, result = self.result_queue.get_nowait()
-            
-            if success:
-                if not result:
-                    # No text found
-                    if self.dashboard and hasattr(self.dashboard, 'error_var') and self.dashboard.error_var.get():
-                        messagebox.showinfo("Info", "No text was found in the selected area.")
+            try:
+                success, result = self.result_queue.get_nowait()
+                
+                if success:
+                    if not result:
+                        # No text found
+                        if self.dashboard and hasattr(self.dashboard, 'error_var') and self.dashboard.error_var.get():
+                            messagebox.showinfo("Info", "No text was found in the selected area.")
+                        # Reset state and show window again
+                        self.start_x = None
+                        self.start_y = None
+                        self.root.deiconify()
+                        return
+                    
+                    # Copy text to clipboard
+                    try:
+                        self.copy_to_clipboard(result)
+                        
+                        # Show success notification if enabled
+                        if self.dashboard and hasattr(self.dashboard, 'notif_var') and self.dashboard.notif_var.get():
+                            messagebox.showinfo("Success", "Text copied to clipboard!")
+                        self.quit()
+                    except Exception as clip_err:
+                        print(f"Clipboard error: {clip_err}")
+                        messagebox.showerror("Error", f"Failed to copy to clipboard: {str(clip_err)}")
+                        # Reset state and show window again
+                        self.start_x = None
+                        self.start_y = None
+                        self.root.deiconify()
+                else:
+                    # Error occurred
+                    messagebox.showerror("Error", f"Failed to process image: {result}")
+                    # Reset state and show window again
+                    self.start_x = None
+                    self.start_y = None
                     self.root.deiconify()
-                    return
-                
-                # Copy text to clipboard
-                self.copy_to_clipboard(result)
-                
-                # Show success notification if enabled
-                if self.dashboard and hasattr(self.dashboard, 'notif_var') and self.dashboard.notif_var.get():
-                    messagebox.showinfo("Success", "Text copied to clipboard!")
-                self.quit()
-            else:
-                # Error occurred
-                messagebox.showerror("Error", f"Failed to process image: {result}")
-                self.quit()
-        except queue.Empty:
-            # Not ready yet, check again in 50ms
-            self.root.after(50, self.check_processing_results)
+            except queue.Empty:
+                # Not ready yet, check again in 50ms
+                self.root.after(50, self.check_processing_results)
+        except Exception as e:
+            # Handle any unexpected errors
+            print(f"Unexpected error in check_processing_results: {e}")
+            messagebox.showerror("Error", f"An unexpected error occurred: {str(e)}")
+            # Reset state and show window again
+            self.start_x = None
+            self.start_y = None
+            self.root.deiconify()
     
     def run(self):
         if self.root:
